@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Interactive Elements Highlighter v2.1
+// @name         Interactive Elements Highlighter v2.2
 // @namespace    http://yourdomain.com/
-// @version      2.1
+// @version      2.2
 // @description  Overlay bounding boxes and labels on interactive elements with enhanced features and reliability.
-// @author       
+// @author
 // @match        *://*/*
 // @grant        none
 // ==/UserScript==
@@ -58,6 +58,7 @@
     let labelFontSize = CONFIG.LABEL_FONT_SIZE;
     let labelPosition = { x: CONFIG.LABEL_OFFSET_X, y: CONFIG.LABEL_OFFSET_Y };
     let labelCorner = 'top-left'; // Options: 'top-left', 'top-right', 'bottom-left', 'bottom-right'
+    let addBtn, removeBtn, isolateBtn;
 
     /***********************
      * Utility Functions
@@ -65,7 +66,7 @@
 
     /**
      * Generates a color from the COLORS array based on the index.
-     * @param {number} index 
+     * @param {number} index
      * @returns {string} HEX color code
      */
     function generateColor(index) {
@@ -74,7 +75,7 @@
 
     /**
      * Determines if an element is interactive based on tag, attributes, or event listeners.
-     * @param {HTMLElement} el 
+     * @param {HTMLElement} el
      * @returns {boolean}
      */
     function isInteractive(el) {
@@ -100,10 +101,12 @@
 
     /**
      * Checks if an element is visible in the viewport and not occluded by other elements.
-     * @param {HTMLElement} el 
+     * @param {HTMLElement} el
      * @returns {boolean}
      */
     function isElementVisible(el) {
+        if (!el) return false;
+
         const rect = el.getBoundingClientRect();
         if (
             rect.width === 0 ||
@@ -113,6 +116,11 @@
             rect.top > (window.innerHeight || document.documentElement.clientHeight) ||
             rect.left > (window.innerWidth || document.documentElement.clientWidth)
         ) {
+            return false;
+        }
+
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) {
             return false;
         }
 
@@ -145,6 +153,11 @@
             elements = elements.filter(el => !excludedSelectors.some(selector => el.matches(selector)));
         }
 
+        // Include elements that have been manually added
+        const manuallyAddedElements = Array.from(elementMap.keys()).filter(el => !elements.includes(el) && document.body.contains(el));
+
+        elements = elements.concat(manuallyAddedElements);
+
         // Remove duplicates
         elements = [...new Set(elements)];
 
@@ -169,9 +182,9 @@
 
     /**
      * Creates a bounding box and label for an interactive element.
-     * @param {HTMLElement} el 
-     * @param {number} label 
-     * @param {string} color 
+     * @param {HTMLElement} el
+     * @param {number} label
+     * @param {string} color
      */
     function createOverlayBox(el, label, color) {
         const rect = el.getBoundingClientRect();
@@ -179,11 +192,11 @@
         // Create Box
         const box = document.createElement('div');
         box.style.position = 'absolute';
-        box.style.border = ${CONFIG.BOX_BORDER_WIDTH}px solid ${color};
-        box.style.left = ${rect.left + window.scrollX}px;
-        box.style.top = ${rect.top + window.scrollY}px;
-        box.style.width = ${rect.width}px;
-        box.style.height = ${rect.height}px;
+        box.style.border = `${CONFIG.BOX_BORDER_WIDTH}px solid ${color}`;
+        box.style.left = `${rect.left + window.scrollX}px`;
+        box.style.top = `${rect.top + window.scrollY}px`;
+        box.style.width = `${rect.width}px`;
+        box.style.height = `${rect.height}px`;
         box.style.pointerEvents = 'none';
         box.style.zIndex = '9999';
         box.id = CONFIG.BOX_PREFIX + label;
@@ -197,18 +210,18 @@
         labelDiv.style.position = 'absolute';
         labelDiv.style.backgroundColor = color;
         labelDiv.style.color = getContrastingTextColor(color);
-        labelDiv.style.fontSize = ${labelFontSize}px;
+        labelDiv.style.fontSize = `${labelFontSize}px`;
         labelDiv.style.padding = CONFIG.LABEL_PADDING;
         labelDiv.style.borderRadius = CONFIG.LABEL_BORDER_RADIUS;
-        labelDiv.style.left = ${rect.left + window.scrollX + labelPosition.x}px;
-        labelDiv.style.top = ${rect.top + window.scrollY + labelPosition.y}px;
+        labelDiv.style.left = `${rect.left + window.scrollX + labelPosition.x}px`;
+        labelDiv.style.top = `${rect.top + window.scrollY + labelPosition.y}px`;
         labelDiv.style.pointerEvents = 'none';
         labelDiv.style.zIndex = '10000';
         labelDiv.id = CONFIG.LABEL_PREFIX + label;
         labelDiv.classList.add('ieh-label');
 
         // Add border for better visibility
-        labelDiv.style.border = ${CONFIG.LABEL_BORDER_WIDTH}px solid ${getContrastingTextColor(color)};
+        labelDiv.style.border = `${CONFIG.LABEL_BORDER_WIDTH}px solid ${getContrastingTextColor(color)}`;
 
         document.body.appendChild(labelDiv);
         labels[label] = labelDiv;
@@ -219,8 +232,8 @@
 
     /**
      * Adjusts the label position to ensure it is fully visible within the viewport.
-     * @param {HTMLElement} labelDiv 
-     * @param {HTMLElement} box 
+     * @param {HTMLElement} labelDiv
+     * @param {HTMLElement} box
      */
     function adjustLabelPosition(labelDiv, box) {
         const labelRect = labelDiv.getBoundingClientRect();
@@ -228,49 +241,49 @@
 
         // Default attachment to outer upper left corner
         if (labelCorner === 'top-left') {
-            labelDiv.style.left = ${boxRect.left + window.scrollX}px;
-            labelDiv.style.top = ${boxRect.top + window.scrollY - labelRect.height}px;
+            labelDiv.style.left = `${boxRect.left + window.scrollX}px`;
+            labelDiv.style.top = `${boxRect.top + window.scrollY - labelRect.height}px`;
         } else if (labelCorner === 'top-right') {
-            labelDiv.style.left = ${boxRect.right + window.scrollX - labelRect.width}px;
-            labelDiv.style.top = ${boxRect.top + window.scrollY - labelRect.height}px;
+            labelDiv.style.left = `${boxRect.right + window.scrollX - labelRect.width}px`;
+            labelDiv.style.top = `${boxRect.top + window.scrollY - labelRect.height}px`;
         } else if (labelCorner === 'bottom-left') {
-            labelDiv.style.left = ${boxRect.left + window.scrollX}px;
-            labelDiv.style.top = ${boxRect.bottom + window.scrollY}px;
+            labelDiv.style.left = `${boxRect.left + window.scrollX}px`;
+            labelDiv.style.top = `${boxRect.bottom + window.scrollY}px`;
         } else if (labelCorner === 'bottom-right') {
-            labelDiv.style.left = ${boxRect.right + window.scrollX - labelRect.width}px;
-            labelDiv.style.top = ${boxRect.bottom + window.scrollY}px;
+            labelDiv.style.left = `${boxRect.right + window.scrollX - labelRect.width}px`;
+            labelDiv.style.top = `${boxRect.bottom + window.scrollY}px`;
         }
 
         // Apply free adjustments
-        labelDiv.style.left = ${parseInt(labelDiv.style.left) + labelPosition.x}px;
-        labelDiv.style.top = ${parseInt(labelDiv.style.top) + labelPosition.y}px;
+        labelDiv.style.left = `${parseInt(labelDiv.style.left) + labelPosition.x}px`;
+        labelDiv.style.top = `${parseInt(labelDiv.style.top) + labelPosition.y}px`;
 
         const updatedLabelRect = labelDiv.getBoundingClientRect();
 
         // Check if label is off the top of the viewport
         if (updatedLabelRect.top < 0) {
-            labelDiv.style.top = ${boxRect.top + window.scrollY + boxRect.height + 2}px; // Position below the box
+            labelDiv.style.top = `${boxRect.top + window.scrollY + boxRect.height + 2}px`; // Position below the box
         }
 
         // Check if label is off the left of the viewport
         if (updatedLabelRect.left < 0) {
-            labelDiv.style.left = ${boxRect.left + window.scrollX + 2}px;
+            labelDiv.style.left = `${boxRect.left + window.scrollX + 2}px`;
         }
 
         // Check if label is off the right of the viewport
         if (updatedLabelRect.right > (window.innerWidth || document.documentElement.clientWidth)) {
-            labelDiv.style.left = ${(boxRect.right + window.scrollX) - updatedLabelRect.width - 2}px;
+            labelDiv.style.left = `${(boxRect.right + window.scrollX) - updatedLabelRect.width - 2}px`;
         }
 
         // Check if label is off the bottom of the viewport
         if (updatedLabelRect.bottom > (window.innerHeight || document.documentElement.clientHeight)) {
-            labelDiv.style.top = ${boxRect.top + window.scrollY - updatedLabelRect.height - 2}px;
+            labelDiv.style.top = `${boxRect.top + window.scrollY - updatedLabelRect.height - 2}px`;
         }
     }
 
     /**
      * Removes the bounding box and label for a given label.
-     * @param {number} label 
+     * @param {number} label
      */
     function removeOverlayBox(label) {
         if (boxes[label]) {
@@ -309,19 +322,6 @@
                 const color = generateColor(label - 1);
                 colorMap.set(label, color);
                 createOverlayBox(el, label, color);
-
-                // Automatically add qualifying elements in the same container
-                const container = el.parentElement;
-                if (container) {
-                    const siblings = Array.from(container.children).filter(child => isInteractive(child) && !elementMap.has(child) && !child.closest('#' + CONFIG.CONTROL_PANEL_ID));
-                    siblings.forEach(sibling => {
-                        const siblingLabel = labelCounter++;
-                        elementMap.set(sibling, siblingLabel);
-                        const siblingColor = generateColor(siblingLabel - 1);
-                        colorMap.set(siblingLabel, siblingColor);
-                        createOverlayBox(sibling, siblingLabel, siblingColor);
-                    });
-                }
             } else {
                 const label = elementMap.get(el);
                 const color = colorMap.get(label);
@@ -329,15 +329,15 @@
                 const labelDiv = labels[label];
                 if (box && labelDiv) {
                     const rect = el.getBoundingClientRect();
-                    box.style.left = ${rect.left + window.scrollX}px;
-                    box.style.top = ${rect.top + window.scrollY}px;
-                    box.style.width = ${rect.width}px;
-                    box.style.height = ${rect.height}px;
+                    box.style.left = `${rect.left + window.scrollX}px`;
+                    box.style.top = `${rect.top + window.scrollY}px`;
+                    box.style.width = `${rect.width}px`;
+                    box.style.height = `${rect.height}px`;
 
                     // Update label position
-                    labelDiv.style.fontSize = ${labelFontSize}px;
-                    labelDiv.style.left = ${rect.left + window.scrollX + labelPosition.x}px;
-                    labelDiv.style.top = ${rect.top + window.scrollY + labelPosition.y}px;
+                    labelDiv.style.fontSize = `${labelFontSize}px`;
+                    labelDiv.style.left = `${rect.left + window.scrollX + labelPosition.x}px`;
+                    labelDiv.style.top = `${rect.top + window.scrollY + labelPosition.y}px`;
 
                     // Adjust label position if needed
                     adjustLabelPosition(labelDiv, box);
@@ -370,8 +370,8 @@
 
     /**
      * Debounces a function by the specified delay.
-     * @param {Function} func 
-     * @param {number} wait 
+     * @param {Function} func
+     * @param {number} wait
      * @returns {Function}
      */
     function debounce(func, wait) {
@@ -398,7 +398,7 @@
         panel.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
         panel.style.padding = '10px';
         panel.style.borderRadius = '5px';
-        panel.style.zIndex = '100000';
+        panel.style.zIndex = '2147483647'; // Max z-index
         panel.style.fontFamily = 'Arial, sans-serif';
         panel.style.color = '#FFFFFF';
         panel.style.display = 'flex';
@@ -425,21 +425,21 @@
         panel.appendChild(toggleBtn);
 
         // Add Bounding Box Button
-        const addBtn = createControlButton('Add Box', () => {
+        addBtn = createControlButton('Add Box', () => {
             toggleAddMode();
             addBtn.innerText = addMode ? 'Cancel Add' : 'Add Box';
         });
         panel.appendChild(addBtn);
 
         // Remove Bounding Box Button
-        const removeBtn = createControlButton('Remove Box', () => {
+        removeBtn = createControlButton('Remove Box', () => {
             toggleRemoveMode();
             removeBtn.innerText = removeMode ? 'Cancel Remove' : 'Remove Box';
         });
         panel.appendChild(removeBtn);
 
         // Isolate Bounding Box Button
-        const isolateBtn = createControlButton('Isolate Box', () => {
+        isolateBtn = createControlButton('Isolate Box', () => {
             toggleIsolateMode();
             isolateBtn.innerText = isolateMode ? 'Cancel Isolate' : 'Isolate Box';
         });
@@ -472,6 +472,11 @@
             const newSize = parseInt(sizeInput.value);
             if (!isNaN(newSize) && newSize >= 8 && newSize <= 24) {
                 labelFontSize = newSize;
+                // Save to user settings
+                if (!userSettings.globalSettings) userSettings.globalSettings = {};
+                userSettings.globalSettings.labelFontSize = labelFontSize;
+                localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(userSettings));
+
                 updateOverlays();
             } else {
                 sizeInput.value = labelFontSize;
@@ -500,19 +505,24 @@
         corners.forEach(corner => {
             const radio = document.createElement('input');
             radio.type = 'radio';
-            radio.id = corner-${corner};
+            radio.id = `corner-${corner}`;
             radio.name = 'label-corner';
             radio.value = corner;
             if (corner === labelCorner) radio.checked = true;
             radio.addEventListener('change', () => {
                 if (radio.checked) {
                     labelCorner = corner;
+                    // Save to user settings
+                    if (!userSettings.globalSettings) userSettings.globalSettings = {};
+                    userSettings.globalSettings.labelCorner = labelCorner;
+                    localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(userSettings));
+
                     updateOverlays();
                 }
             });
 
             const radioLabel = document.createElement('label');
-            radioLabel.htmlFor = corner-${corner};
+            radioLabel.htmlFor = `corner-${corner}`;
             radioLabel.innerText = corner.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase());
             radioLabel.style.fontSize = '12px';
 
@@ -535,18 +545,38 @@
 
         const upBtn = createControlButton('↑', () => {
             labelPosition.y -= 2;
+            // Save to user settings
+            if (!userSettings.globalSettings) userSettings.globalSettings = {};
+            userSettings.globalSettings.labelPosition = labelPosition;
+            localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(userSettings));
+
             updateOverlays();
         });
         const downBtn = createControlButton('↓', () => {
             labelPosition.y += 2;
+            // Save to user settings
+            if (!userSettings.globalSettings) userSettings.globalSettings = {};
+            userSettings.globalSettings.labelPosition = labelPosition;
+            localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(userSettings));
+
             updateOverlays();
         });
         const leftBtn = createControlButton('←', () => {
             labelPosition.x -= 2;
+            // Save to user settings
+            if (!userSettings.globalSettings) userSettings.globalSettings = {};
+            userSettings.globalSettings.labelPosition = labelPosition;
+            localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(userSettings));
+
             updateOverlays();
         });
         const rightBtn = createControlButton('→', () => {
             labelPosition.x += 2;
+            // Save to user settings
+            if (!userSettings.globalSettings) userSettings.globalSettings = {};
+            userSettings.globalSettings.labelPosition = labelPosition;
+            localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(userSettings));
+
             updateOverlays();
         });
 
@@ -564,8 +594,8 @@
 
     /**
      * Creates a styled control button.
-     * @param {string} text 
-     * @param {Function} onClick 
+     * @param {string} text
+     * @param {Function} onClick
      * @returns {HTMLButtonElement}
      */
     function createControlButton(text, onClick) {
@@ -605,6 +635,9 @@
      */
     function activateAddMode() {
         addMode = true;
+        if (addBtn) {
+            addBtn.innerText = 'Cancel Add';
+        }
         document.body.style.cursor = 'crosshair';
         const handler = function (e) {
             e.preventDefault();
@@ -645,6 +678,9 @@
      */
     function deactivateAddMode() {
         addMode = false;
+        if (addBtn) {
+            addBtn.innerText = 'Add Box';
+        }
         document.body.style.cursor = 'default';
         if (activateAddMode.handler) {
             document.removeEventListener('click', activateAddMode.handler, true);
@@ -670,6 +706,9 @@
      */
     function activateRemoveMode() {
         removeMode = true;
+        if (removeBtn) {
+            removeBtn.innerText = 'Cancel Remove';
+        }
         document.body.style.cursor = 'not-allowed';
         const handler = function (e) {
             e.preventDefault();
@@ -696,6 +735,9 @@
      */
     function deactivateRemoveMode() {
         removeMode = false;
+        if (removeBtn) {
+            removeBtn.innerText = 'Remove Box';
+        }
         document.body.style.cursor = 'default';
         if (activateRemoveMode.handler) {
             document.removeEventListener('click', activateRemoveMode.handler, true);
@@ -721,6 +763,9 @@
      */
     function activateIsolateMode() {
         isolateMode = true;
+        if (isolateBtn) {
+            isolateBtn.innerText = 'Cancel Isolate';
+        }
         isIsolated = false;
         isolatedElement = null;
 
@@ -757,6 +802,9 @@
      */
     function deactivateIsolateMode() {
         isolateMode = false;
+        if (isolateBtn) {
+            isolateBtn.innerText = 'Isolate Box';
+        }
         isIsolated = false;
         isolatedElement = null;
 
@@ -773,7 +821,7 @@
 
     /**
      * Checks if an element is excluded based on user settings.
-     * @param {HTMLElement} el 
+     * @param {HTMLElement} el
      * @returns {boolean}
      */
     function isElementExcluded(el) {
@@ -783,7 +831,7 @@
 
     /**
      * Saves user actions (add/remove) to localStorage for persistence.
-     * @param {HTMLElement} el 
+     * @param {HTMLElement} el
      * @param {string} action 'add' or 'remove'
      */
     function saveUserAction(el, action) {
@@ -811,30 +859,20 @@
 
     /**
      * Generates a unique CSS selector for an element.
-     * @param {HTMLElement} el 
+     * @param {HTMLElement} el
      * @returns {string} CSS selector
      */
     function getUniqueSelector(el) {
         if (el.id) {
-            return #${el.id};
+            return `#${el.id}`;
         }
         let path = [];
         while (el && el.nodeType === Node.ELEMENT_NODE && el.tagName.toLowerCase() !== 'html') {
             let selector = el.tagName.toLowerCase();
             if (el.className) {
                 const classes = el.className.trim().split(/\s+/).join('.');
-                selector += .${classes};
+                selector += `.${classes}`;
             }
-            const sibling = el;
-            let siblingIndex = 1;
-            let siblingNode = el.previousElementSibling;
-            while (siblingNode) {
-                if (siblingNode.tagName === el.tagName) {
-                    siblingIndex++;
-                }
-                siblingNode = siblingNode.previousElementSibling;
-            }
-            selector += :nth-of-type(${siblingIndex});
             path.unshift(selector);
             el = el.parentElement;
         }
@@ -847,7 +885,17 @@
      */
     function loadUserSettings() {
         const stored = localStorage.getItem(CONFIG.STORAGE_KEY);
-        return stored ? JSON.parse(stored) : {};
+        if (stored) {
+            const settings = JSON.parse(stored);
+            if (settings.globalSettings) {
+                labelFontSize = settings.globalSettings.labelFontSize || CONFIG.LABEL_FONT_SIZE;
+                labelPosition = settings.globalSettings.labelPosition || { x: CONFIG.LABEL_OFFSET_X, y: CONFIG.LABEL_OFFSET_Y };
+                labelCorner = settings.globalSettings.labelCorner || 'top-left';
+            }
+            return settings;
+        } else {
+            return {};
+        }
     }
 
     /**
@@ -859,7 +907,7 @@
 
         // Observe DOM changes
         const observer = new MutationObserver(debounce(updateOverlays, CONFIG.DEBOUNCE_DELAY));
-        observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
 
         // Observe scroll and resize events
         window.addEventListener('scroll', debounce(updateOverlays, CONFIG.DEBOUNCE_DELAY), true);
