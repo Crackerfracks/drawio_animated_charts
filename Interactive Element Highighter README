@@ -1,0 +1,187 @@
+Threw this together in a few hours with o1-mini
+
+# Interactive Elements Highlighter (IEH) v2.2
+
+**Interactive Elements Highlighter** is a powerful UserScript designed to enhance your web browsing experience by overlaying bounding boxes and labels on interactive elements across websites. This tool is invaluable for developers, testers, and users who wish to identify and interact with various interactive components on any webpage.
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Control Panel Overview](#control-panel-overview)
+- [Known Issues](#known-issues)
+- [Future Improvements](#future-improvements)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Features
+
+- **Overlay Bounding Boxes:** Automatically detects and highlights interactive elements such as buttons, links, inputs, and more with customizable bounding boxes.
+- **Labeling System:** Assigns unique numerical labels to each interactive element for easy reference.
+- **Control Panel:** A user-friendly toolbar that allows you to toggle features, adjust settings, and manage overlays in real-time.
+- **Customization Options:**
+  - **Box Appearance:** Customize border width and colors.
+  - **Label Appearance:** Adjust font size, position, padding, and border styles.
+- **Interactive Modes:**
+  - **Add Mode:** Manually add bounding boxes to specific elements.
+  - **Remove Mode:** Remove existing bounding boxes.
+  - **Isolate Mode:** Highlight a single interactive element while hiding others upon hover.
+- **Dynamic Updates:** Continuously monitors the webpage for changes and updates overlays accordingly.
+- **Persistence:** Saves user settings such as included/excluded selectors, label sizes, and positions across sessions and sites.
+
+## Installation
+
+1. **Install a Userscript Manager:**
+   - **[Tampermonkey](https://www.tampermonkey.net/)** (Available for Chrome, Firefox, Safari, Edge, and more)
+   - **[Greasemonkey](https://www.greasespot.net/)** (For Firefox)
+   - **[Violentmonkey](https://violentmonkey.github.io/)** (For various browsers)
+
+2. **Add the Script:**
+   - **Manually:**
+     1. Copy the entire script content.
+     2. Open your Userscript manager dashboard.
+     3. Create a new script and paste the copied content.
+     4. Save the script.
+   - **From Repository:**
+     - If available, navigate to the script's repository and click the install button compatible with your Userscript manager.
+
+## Usage
+
+Once installed, the **Interactive Elements Highlighter** will automatically begin highlighting interactive elements on any webpage you visit. To interact with its features:
+
+1. **Access the Control Panel:**
+   - A floating control panel titled **"IEH Controls"** will appear at the top-right corner of the webpage.
+
+2. **Control Panel Buttons:**
+   - **Hide/Show Boxes:** Toggle the visibility of all bounding boxes and labels.
+   - **Add Box:** Enter Add Mode to manually highlight elements by clicking on them.
+   - **Remove Box:** Enter Remove Mode to delete existing bounding boxes by clicking on them.
+   - **Isolate Box:** Enter Isolate Mode to highlight a single element while hiding others upon hover.
+   - **Recalculate:** Manually trigger an update of all overlays, useful if elements are dynamically loaded or removed.
+   
+3. **Adjusting Label Appearance:**
+   - **Label Size:** Use the spinbox to adjust the font size of labels (8px to 24px).
+   - **Label Position:** Select the corner position (top-left, top-right, bottom-left, bottom-right) and fine-tune using arrow buttons for precise placement.
+
+## Configuration
+
+The script offers extensive customization to fit your specific needs. Below are the configurable parameters:
+
+- **Box Settings:**
+  - `BOX_BORDER_WIDTH`: Thickness of the bounding box borders in pixels.
+  - `COLORS`: Array of HEX color codes used for bounding boxes and labels.
+
+- **Label Settings:**
+  - `LABEL_FONT_SIZE`: Initial font size of labels (modifiable via the control panel).
+  - `LABEL_PADDING`: Padding inside label boxes.
+  - `LABEL_BORDER_RADIUS`: Rounded corners for labels.
+  - `LABEL_OFFSET_X` & `LABEL_OFFSET_Y`: Fine adjustments for label positioning.
+  - `LABEL_BORDER_WIDTH`: Thickness of the label borders.
+  - `LABEL_BORDER_COLOR_LIGHT` & `LABEL_BORDER_COLOR_DARK`: Border colors based on background luminance.
+
+- **Performance Settings:**
+  - `DEBOUNCE_DELAY`: Delay in milliseconds to optimize performance during rapid DOM changes.
+  - `STORAGE_KEY`: Key used for saving user settings in `localStorage`.
+
+These settings can be adjusted directly within the script or through the control panel's UI elements.
+
+## Control Panel Overview
+
+The **IEH Control Panel** provides an intuitive interface to manage and customize the highlighter's behavior:
+
+1. **Show/Hide Bounding Boxes:**
+   - **Button:** Toggles the visibility of all bounding boxes and labels.
+   - **State Indicator:** Button text updates to reflect the current state ("Hide Boxes" or "Show Boxes").
+
+2. **Add Box:**
+   - **Button:** Activates Add Mode.
+   - **Behavior:** Allows you to click on any interactive element to add a bounding box and label.
+   - **State Indicator:** Button text changes to "Cancel Add" when active.
+
+3. **Remove Box:**
+   - **Button:** Activates Remove Mode.
+   - **Behavior:** Enables clicking on existing bounding boxes to remove them.
+   - **State Indicator:** Button text changes to "Cancel Remove" when active.
+
+4. **Isolate Box:**
+   - **Button:** Activates Isolate Mode.
+   - **Behavior:** Highlights a single interactive element while hiding others upon hover.
+   - **State Indicator:** Button text changes to "Cancel Isolate" when active.
+   - **Note:** This feature is currently **being worked on** and may experience intermittent issues.
+
+5. **Recalculate:**
+   - **Button:** Forces an update of all overlays, ensuring they reflect the current state of the webpage.
+
+6. **Label Size Adjustment:**
+   - **Spinbox:** Modify the font size of labels within a range of 8px to 24px.
+   - **Persistence:** Changes are saved and persist across page reloads and different websites.
+
+7. **Label Position Selection:**
+   - **Radio Buttons:** Choose the corner position for labels (top-left, top-right, bottom-left, bottom-right).
+   - **Arrow Buttons:** Fine-tune the label's X and Y offsets for precise placement.
+   - **Persistence:** Adjustments are saved and persist across sessions and sites.
+
+## Known Issues
+
+While **Interactive Elements Highlighter v2.2** offers robust functionality, some issues persist:
+
+1. **Hover Isolation:**
+   - **Description:** The Isolate Mode feature, intended to highlight a single element while hiding others upon hover, is currently **being worked on**. Users may experience inconsistent behavior when activating this mode.
+   - **Status:** Ongoing improvements are in progress to ensure reliable functionality.
+
+2. **Duplicate Bounding Boxes:**
+   - **Description:** Occasionally, duplicate bounding boxes appear beneath styled elements. This issue arises particularly on websites with complex CSS or dynamic content rendering.
+   - **Impact:** May cause visual clutter and confusion by displaying multiple overlays for a single interactive element.
+   - **Status:** **Being worked on.** Efforts are underway to refine the detection and rendering logic to eliminate duplicates.
+
+3. **Limited Cross-Site Support:**
+   - **Description:** The script may not function uniformly across all websites, especially those with strict Content Security Policies (CSP) or unique DOM structures.
+   - **Impact:** On certain sites like ChatGPT, the control panel might not appear, and some interactive elements may not be correctly identified or updated.
+   - **Status:** Full cross-site support remains a challenge due to varying website implementations. Future updates aim to enhance compatibility, but some limitations may persist.
+
+4. **Performance on Dynamic Pages:**
+   - **Description:** On pages with heavy dynamic content (e.g., single-page applications), the script might lag or fail to update overlays promptly.
+   - **Impact:** Delayed or incomplete rendering of bounding boxes and labels.
+   - **Status:** Optimizations are being considered to better handle dynamic content and improve performance.
+
+## Future Improvements
+
+The development team is actively working on addressing the known issues and enhancing the script's capabilities:
+
+- **Enhancing Isolate Mode:** Refining event listeners and state management to ensure consistent behavior across all websites.
+- **Eliminating Duplicate Overlays:** Improving element detection logic to prevent multiple bounding boxes for the same interactive element.
+- **Expanding Cross-Site Compatibility:** Implementing more robust methods to handle diverse website structures and CSP restrictions.
+- **Performance Optimization:** Streamlining the script to better manage resources, especially on dynamic and content-heavy webpages.
+- **Additional Customization Options:** Introducing more user preferences for enhanced control over overlay appearance and behavior.
+
+## Contributing
+
+Contributions are welcome! If you've identified a bug, have a feature request, or want to contribute code, please follow these steps:
+
+1. **Fork the Repository:** Click the "Fork" button on the repository page to create your own copy.
+2. **Clone Your Fork:** Use `git clone` to clone your forked repository to your local machine.
+3. **Create a Branch:** Create a new branch for your feature or bugfix.
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+4. **Make Changes:** Implement your changes and commit them with descriptive messages.
+   ```bash
+   git commit -m "Add feature XYZ"
+   ```
+5. **Push to GitHub:** Push your changes to your forked repository.
+   ```bash
+   git push origin feature/your-feature-name
+   ```
+6. **Open a Pull Request:** Navigate to the original repository and open a pull request detailing your changes.
+
+Please ensure your contributions adhere to the project's coding standards and include appropriate documentation.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
+**Disclaimer:** While the **Interactive Elements Highlighter** strives to function seamlessly across various websites, certain limitations due to website-specific implementations may affect its performance and compatibility. Users are encouraged to report any issues or suggest improvements to help enhance the tool's effectiveness.
