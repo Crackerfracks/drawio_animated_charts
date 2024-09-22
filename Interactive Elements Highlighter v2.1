@@ -1,0 +1,911 @@
+// ==UserScript==
+// @name         Interactive Elements Highlighter v2.1
+// @namespace    http://yourdomain.com/
+// @version      2.1
+// @description  Overlay bounding boxes and labels on interactive elements with enhanced features and reliability.
+// @author       
+// @match        *://*/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    /***********************
+     * Configuration
+     ***********************/
+    const CONFIG = {
+        BOX_BORDER_WIDTH: 2, // in pixels
+        BOX_PREFIX: 'ieh-box-', // prefix for box IDs
+        LABEL_PREFIX: 'ieh-label-', // prefix for label IDs
+        CONTROL_PANEL_ID: 'ieh-control-panel',
+        CONTROL_BUTTON_CLASS: 'ieh-control-button',
+        COLORS: [
+            '#FF5733', '#33FF57', '#3357FF', '#F333FF',
+            '#33FFF3', '#F3FF33', '#FF33A8', '#A833FF',
+            '#33FFA8', '#FF8C33', '#8C33FF', '#33FF8C',
+            '#FF33FF', '#33FFFF', '#FFFF33', '#FF6633',
+            '#66FF33', '#3366FF'
+        ],
+        LABEL_FONT_SIZE: 12, // in pixels (adjustable via spinbox)
+        DEBOUNCE_DELAY: 100, // in milliseconds
+        STORAGE_KEY: 'ieh-user-settings',
+        LABEL_PADDING: '2px 4px',
+        LABEL_BORDER_RADIUS: '3px',
+        LABEL_OFFSET_Y: -18, // pixels above the box (adjustable)
+        LABEL_OFFSET_X: 0, // pixels left/right adjustment (adjustable)
+        LABEL_BORDER_WIDTH: 1, // in pixels
+        LABEL_BORDER_COLOR_LIGHT: '#000000',
+        LABEL_BORDER_COLOR_DARK: '#FFFFFF'
+    };
+
+    /***********************
+     * State Variables
+     ***********************/
+    let interactiveElements = [];
+    let boxes = {};
+    let labels = {};
+    let elementMap = new Map(); // Maps elements to their labels
+    let colorMap = new Map(); // Maps labels to their colors
+    let labelCounter = 1;
+    let isBoundingBoxesVisible = true;
+    let isIsolated = false;
+    let isolatedElement = null;
+    let userSettings = loadUserSettings();
+    let addMode = false;
+    let removeMode = false;
+    let isolateMode = false;
+    let labelFontSize = CONFIG.LABEL_FONT_SIZE;
+    let labelPosition = { x: CONFIG.LABEL_OFFSET_X, y: CONFIG.LABEL_OFFSET_Y };
+    let labelCorner = 'top-left'; // Options: 'top-left', 'top-right', 'bottom-left', 'bottom-right'
+
+    /***********************
+     * Utility Functions
+     ***********************/
+
+    /**
+     * Generates a color from the COLORS array based on the index.
+     * @param {number} index 
+     * @returns {string} HEX color code
+     */
+    function generateColor(index) {
+        return CONFIG.COLORS[index % CONFIG.COLORS.length];
+    }
+
+    /**
+     * Determines if an element is interactive based on tag, attributes, or event listeners.
+     * @param {HTMLElement} el 
+     * @returns {boolean}
+     */
+    function isInteractive(el) {
+        // Check if the element matches any of the included selectors
+        const includedSelectors = userSettings[window.location.hostname]?.included || [];
+        if (includedSelectors.some(selector => el.matches(selector))) {
+            return true;
+        }
+
+        const tag = el.tagName.toLowerCase();
+        if (['a', 'button', 'input', 'textarea', 'select', 'label'].includes(tag)) return true;
+        if (el.hasAttribute('onclick')) return true;
+        if (el.getAttribute('role') === 'button') return true;
+        if (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1') return true;
+
+        // Check for cursor style
+        const style = window.getComputedStyle(el);
+        if (style.cursor === 'pointer') return true;
+
+        // Additional checks can be implemented as needed
+        return false;
+    }
+
+    /**
+     * Checks if an element is visible in the viewport and not occluded by other elements.
+     * @param {HTMLElement} el 
+     * @returns {boolean}
+     */
+    function isElementVisible(el) {
+        const rect = el.getBoundingClientRect();
+        if (
+            rect.width === 0 ||
+            rect.height === 0 ||
+            rect.bottom < 0 ||
+            rect.right < 0 ||
+            rect.top > (window.innerHeight || document.documentElement.clientHeight) ||
+            rect.left > (window.innerWidth || document.documentElement.clientWidth)
+        ) {
+            return false;
+        }
+
+        // Check if element is occluded by another element
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const topElement = document.elementFromPoint(centerX, centerY);
+        return el.contains(topElement) || topElement === el;
+    }
+
+    /**
+     * Retrieves all interactive elements on the page, excluding those in the control panel.
+     * @returns {HTMLElement[]}
+     */
+    function getInteractiveElements() {
+        // Start with default selectors
+        let selectors = ['a', 'button', 'input', 'textarea', 'select', 'label', '[onclick]', '[role="button"]', '[tabindex]'];
+
+        // Include user-added selectors
+        const includedSelectors = userSettings[window.location.hostname]?.included || [];
+        selectors = selectors.concat(includedSelectors);
+
+        // Exclude user-excluded selectors
+        const excludedSelectors = userSettings[window.location.hostname]?.excluded || [];
+
+        let elements = Array.from(document.querySelectorAll(selectors.join(',')))
+            .filter(el => isInteractive(el) && !el.closest('#' + CONFIG.CONTROL_PANEL_ID));
+
+        if (excludedSelectors.length > 0) {
+            elements = elements.filter(el => !excludedSelectors.some(selector => el.matches(selector)));
+        }
+
+        // Remove duplicates
+        elements = [...new Set(elements)];
+
+        return elements;
+    }
+
+    /**
+     * Determines appropriate text color (black or white) based on background color luminance.
+     * @param {string} bgColor - HEX color code
+     * @returns {string} - '#000000' or '#FFFFFF'
+     */
+    function getContrastingTextColor(bgColor) {
+        // Remove '#' if present
+        const color = bgColor.charAt(0) === '#' ? bgColor.substring(1) : bgColor;
+        const r = parseInt(color.substr(0, 2), 16);
+        const g = parseInt(color.substr(2, 2), 16);
+        const b = parseInt(color.substr(4, 2), 16);
+        // Calculate luminance
+        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        return luminance > 0.5 ? '#000000' : '#FFFFFF';
+    }
+
+    /**
+     * Creates a bounding box and label for an interactive element.
+     * @param {HTMLElement} el 
+     * @param {number} label 
+     * @param {string} color 
+     */
+    function createOverlayBox(el, label, color) {
+        const rect = el.getBoundingClientRect();
+
+        // Create Box
+        const box = document.createElement('div');
+        box.style.position = 'absolute';
+        box.style.border = ${CONFIG.BOX_BORDER_WIDTH}px solid ${color};
+        box.style.left = ${rect.left + window.scrollX}px;
+        box.style.top = ${rect.top + window.scrollY}px;
+        box.style.width = ${rect.width}px;
+        box.style.height = ${rect.height}px;
+        box.style.pointerEvents = 'none';
+        box.style.zIndex = '9999';
+        box.id = CONFIG.BOX_PREFIX + label;
+        box.classList.add('ieh-box');
+        document.body.appendChild(box);
+        boxes[label] = box;
+
+        // Create Label
+        const labelDiv = document.createElement('div');
+        labelDiv.innerText = label;
+        labelDiv.style.position = 'absolute';
+        labelDiv.style.backgroundColor = color;
+        labelDiv.style.color = getContrastingTextColor(color);
+        labelDiv.style.fontSize = ${labelFontSize}px;
+        labelDiv.style.padding = CONFIG.LABEL_PADDING;
+        labelDiv.style.borderRadius = CONFIG.LABEL_BORDER_RADIUS;
+        labelDiv.style.left = ${rect.left + window.scrollX + labelPosition.x}px;
+        labelDiv.style.top = ${rect.top + window.scrollY + labelPosition.y}px;
+        labelDiv.style.pointerEvents = 'none';
+        labelDiv.style.zIndex = '10000';
+        labelDiv.id = CONFIG.LABEL_PREFIX + label;
+        labelDiv.classList.add('ieh-label');
+
+        // Add border for better visibility
+        labelDiv.style.border = ${CONFIG.LABEL_BORDER_WIDTH}px solid ${getContrastingTextColor(color)};
+
+        document.body.appendChild(labelDiv);
+        labels[label] = labelDiv;
+
+        // Adjust Label Position if Off-Screen
+        adjustLabelPosition(labelDiv, box);
+    }
+
+    /**
+     * Adjusts the label position to ensure it is fully visible within the viewport.
+     * @param {HTMLElement} labelDiv 
+     * @param {HTMLElement} box 
+     */
+    function adjustLabelPosition(labelDiv, box) {
+        const labelRect = labelDiv.getBoundingClientRect();
+        const boxRect = box.getBoundingClientRect();
+
+        // Default attachment to outer upper left corner
+        if (labelCorner === 'top-left') {
+            labelDiv.style.left = ${boxRect.left + window.scrollX}px;
+            labelDiv.style.top = ${boxRect.top + window.scrollY - labelRect.height}px;
+        } else if (labelCorner === 'top-right') {
+            labelDiv.style.left = ${boxRect.right + window.scrollX - labelRect.width}px;
+            labelDiv.style.top = ${boxRect.top + window.scrollY - labelRect.height}px;
+        } else if (labelCorner === 'bottom-left') {
+            labelDiv.style.left = ${boxRect.left + window.scrollX}px;
+            labelDiv.style.top = ${boxRect.bottom + window.scrollY}px;
+        } else if (labelCorner === 'bottom-right') {
+            labelDiv.style.left = ${boxRect.right + window.scrollX - labelRect.width}px;
+            labelDiv.style.top = ${boxRect.bottom + window.scrollY}px;
+        }
+
+        // Apply free adjustments
+        labelDiv.style.left = ${parseInt(labelDiv.style.left) + labelPosition.x}px;
+        labelDiv.style.top = ${parseInt(labelDiv.style.top) + labelPosition.y}px;
+
+        const updatedLabelRect = labelDiv.getBoundingClientRect();
+
+        // Check if label is off the top of the viewport
+        if (updatedLabelRect.top < 0) {
+            labelDiv.style.top = ${boxRect.top + window.scrollY + boxRect.height + 2}px; // Position below the box
+        }
+
+        // Check if label is off the left of the viewport
+        if (updatedLabelRect.left < 0) {
+            labelDiv.style.left = ${boxRect.left + window.scrollX + 2}px;
+        }
+
+        // Check if label is off the right of the viewport
+        if (updatedLabelRect.right > (window.innerWidth || document.documentElement.clientWidth)) {
+            labelDiv.style.left = ${(boxRect.right + window.scrollX) - updatedLabelRect.width - 2}px;
+        }
+
+        // Check if label is off the bottom of the viewport
+        if (updatedLabelRect.bottom > (window.innerHeight || document.documentElement.clientHeight)) {
+            labelDiv.style.top = ${boxRect.top + window.scrollY - updatedLabelRect.height - 2}px;
+        }
+    }
+
+    /**
+     * Removes the bounding box and label for a given label.
+     * @param {number} label 
+     */
+    function removeOverlayBox(label) {
+        if (boxes[label]) {
+            document.body.removeChild(boxes[label]);
+            delete boxes[label];
+        }
+        if (labels[label]) {
+            document.body.removeChild(labels[label]);
+            delete labels[label];
+        }
+    }
+
+    /**
+     * Clears all bounding boxes and labels from the page.
+     */
+    function clearAllOverlays() {
+        Object.keys(boxes).forEach(label => removeOverlayBox(label));
+        boxes = {};
+        labels = {};
+        elementMap.clear();
+        colorMap.clear();
+        labelCounter = 1;
+    }
+
+    /**
+     * Updates the positions and visibility of all bounding boxes and labels.
+     */
+    function updateOverlays() {
+        const newInteractiveElements = getInteractiveElements();
+
+        // Add new elements
+        newInteractiveElements.forEach(el => {
+            if (!elementMap.has(el)) {
+                const label = labelCounter++;
+                elementMap.set(el, label);
+                const color = generateColor(label - 1);
+                colorMap.set(label, color);
+                createOverlayBox(el, label, color);
+
+                // Automatically add qualifying elements in the same container
+                const container = el.parentElement;
+                if (container) {
+                    const siblings = Array.from(container.children).filter(child => isInteractive(child) && !elementMap.has(child) && !child.closest('#' + CONFIG.CONTROL_PANEL_ID));
+                    siblings.forEach(sibling => {
+                        const siblingLabel = labelCounter++;
+                        elementMap.set(sibling, siblingLabel);
+                        const siblingColor = generateColor(siblingLabel - 1);
+                        colorMap.set(siblingLabel, siblingColor);
+                        createOverlayBox(sibling, siblingLabel, siblingColor);
+                    });
+                }
+            } else {
+                const label = elementMap.get(el);
+                const color = colorMap.get(label);
+                const box = boxes[label];
+                const labelDiv = labels[label];
+                if (box && labelDiv) {
+                    const rect = el.getBoundingClientRect();
+                    box.style.left = ${rect.left + window.scrollX}px;
+                    box.style.top = ${rect.top + window.scrollY}px;
+                    box.style.width = ${rect.width}px;
+                    box.style.height = ${rect.height}px;
+
+                    // Update label position
+                    labelDiv.style.fontSize = ${labelFontSize}px;
+                    labelDiv.style.left = ${rect.left + window.scrollX + labelPosition.x}px;
+                    labelDiv.style.top = ${rect.top + window.scrollY + labelPosition.y}px;
+
+                    // Adjust label position if needed
+                    adjustLabelPosition(labelDiv, box);
+                }
+            }
+        });
+
+        // Remove overlays for elements no longer present
+        elementMap.forEach((label, el) => {
+            if (!newInteractiveElements.includes(el)) {
+                removeOverlayBox(label);
+                elementMap.delete(el);
+                colorMap.delete(label);
+            }
+        });
+
+        interactiveElements = newInteractiveElements;
+
+        // Handle visibility based on isolation mode
+        elementMap.forEach((label, el) => {
+            const visible = isElementVisible(el);
+            const box = boxes[label];
+            const labelDiv = labels[label];
+            if (box && labelDiv) {
+                box.style.display = visible && (!isIsolated || isolatedElement === el) && isBoundingBoxesVisible ? 'block' : 'none';
+                labelDiv.style.display = visible && (!isIsolated || isolatedElement === el) && isBoundingBoxesVisible ? 'block' : 'none';
+            }
+        });
+    }
+
+    /**
+     * Debounces a function by the specified delay.
+     * @param {Function} func 
+     * @param {number} wait 
+     * @returns {Function}
+     */
+    function debounce(func, wait) {
+        let timeout;
+        return function () {
+            const later = () => {
+                clearTimeout(timeout);
+                func();
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    /**
+     * Creates the control panel toolbar with all necessary buttons and controls.
+     */
+    function createControlPanel() {
+        const panel = document.createElement('div');
+        panel.id = CONFIG.CONTROL_PANEL_ID;
+        panel.style.position = 'fixed';
+        panel.style.top = '10px';
+        panel.style.right = '10px';
+        panel.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+        panel.style.padding = '10px';
+        panel.style.borderRadius = '5px';
+        panel.style.zIndex = '100000';
+        panel.style.fontFamily = 'Arial, sans-serif';
+        panel.style.color = '#FFFFFF';
+        panel.style.display = 'flex';
+        panel.style.flexDirection = 'column';
+        panel.style.gap = '10px';
+        panel.style.maxHeight = '90vh';
+        panel.style.overflowY = 'auto';
+
+        const title = document.createElement('div');
+        title.innerText = 'IEH Controls';
+        title.style.marginBottom = '5px';
+        title.style.fontWeight = 'bold';
+        panel.appendChild(title);
+
+        // Show/Hide Bounding Boxes Button
+        const toggleBtn = createControlButton('Hide Boxes', () => {
+            isBoundingBoxesVisible = !isBoundingBoxesVisible;
+            Object.keys(boxes).forEach(label => {
+                boxes[label].style.display = isBoundingBoxesVisible ? 'block' : 'none';
+                labels[label].style.display = isBoundingBoxesVisible ? 'block' : 'none';
+            });
+            toggleBtn.innerText = isBoundingBoxesVisible ? 'Hide Boxes' : 'Show Boxes';
+        });
+        panel.appendChild(toggleBtn);
+
+        // Add Bounding Box Button
+        const addBtn = createControlButton('Add Box', () => {
+            toggleAddMode();
+            addBtn.innerText = addMode ? 'Cancel Add' : 'Add Box';
+        });
+        panel.appendChild(addBtn);
+
+        // Remove Bounding Box Button
+        const removeBtn = createControlButton('Remove Box', () => {
+            toggleRemoveMode();
+            removeBtn.innerText = removeMode ? 'Cancel Remove' : 'Remove Box';
+        });
+        panel.appendChild(removeBtn);
+
+        // Isolate Bounding Box Button
+        const isolateBtn = createControlButton('Isolate Box', () => {
+            toggleIsolateMode();
+            isolateBtn.innerText = isolateMode ? 'Cancel Isolate' : 'Isolate Box';
+        });
+        panel.appendChild(isolateBtn);
+
+        // Recalculate Positions Button
+        const recalcBtn = createControlButton('Recalculate', () => {
+            updateOverlays();
+        });
+        panel.appendChild(recalcBtn);
+
+        // Label Size Adjustment Spinbox
+        const sizeContainer = document.createElement('div');
+        sizeContainer.style.display = 'flex';
+        sizeContainer.style.alignItems = 'center';
+        sizeContainer.style.gap = '5px';
+
+        const sizeLabel = document.createElement('label');
+        sizeLabel.innerText = 'Label Size:';
+        sizeLabel.style.fontSize = '12px';
+        sizeContainer.appendChild(sizeLabel);
+
+        const sizeInput = document.createElement('input');
+        sizeInput.type = 'number';
+        sizeInput.min = '8';
+        sizeInput.max = '24';
+        sizeInput.value = labelFontSize;
+        sizeInput.style.width = '50px';
+        sizeInput.addEventListener('change', () => {
+            const newSize = parseInt(sizeInput.value);
+            if (!isNaN(newSize) && newSize >= 8 && newSize <= 24) {
+                labelFontSize = newSize;
+                updateOverlays();
+            } else {
+                sizeInput.value = labelFontSize;
+            }
+        });
+        sizeContainer.appendChild(sizeInput);
+        panel.appendChild(sizeContainer);
+
+        // Label Position Selection
+        const positionContainer = document.createElement('div');
+        positionContainer.style.display = 'flex';
+        positionContainer.style.flexDirection = 'column';
+        positionContainer.style.gap = '5px';
+
+        const positionLabel = document.createElement('div');
+        positionLabel.innerText = 'Label Position:';
+        positionLabel.style.fontSize = '12px';
+        positionContainer.appendChild(positionLabel);
+
+        // Corner Selection
+        const cornerContainer = document.createElement('div');
+        cornerContainer.style.display = 'flex';
+        cornerContainer.style.gap = '5px';
+
+        const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+        corners.forEach(corner => {
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.id = corner-${corner};
+            radio.name = 'label-corner';
+            radio.value = corner;
+            if (corner === labelCorner) radio.checked = true;
+            radio.addEventListener('change', () => {
+                if (radio.checked) {
+                    labelCorner = corner;
+                    updateOverlays();
+                }
+            });
+
+            const radioLabel = document.createElement('label');
+            radioLabel.htmlFor = corner-${corner};
+            radioLabel.innerText = corner.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase());
+            radioLabel.style.fontSize = '12px';
+
+            cornerContainer.appendChild(radio);
+            cornerContainer.appendChild(radioLabel);
+        });
+
+        positionContainer.appendChild(cornerContainer);
+
+        // Arrow Buttons for Fine Adjustment
+        const arrowContainer = document.createElement('div');
+        arrowContainer.style.display = 'flex';
+        arrowContainer.style.gap = '5px';
+        arrowContainer.style.alignItems = 'center';
+
+        const arrowLabel = document.createElement('span');
+        arrowLabel.innerText = 'Adjust Position:';
+        arrowLabel.style.fontSize = '12px';
+        arrowContainer.appendChild(arrowLabel);
+
+        const upBtn = createControlButton('↑', () => {
+            labelPosition.y -= 2;
+            updateOverlays();
+        });
+        const downBtn = createControlButton('↓', () => {
+            labelPosition.y += 2;
+            updateOverlays();
+        });
+        const leftBtn = createControlButton('←', () => {
+            labelPosition.x -= 2;
+            updateOverlays();
+        });
+        const rightBtn = createControlButton('→', () => {
+            labelPosition.x += 2;
+            updateOverlays();
+        });
+
+        arrowContainer.appendChild(upBtn);
+        arrowContainer.appendChild(downBtn);
+        arrowContainer.appendChild(leftBtn);
+        arrowContainer.appendChild(rightBtn);
+
+        positionContainer.appendChild(arrowContainer);
+        panel.appendChild(positionContainer);
+
+        // Append the control panel to the body
+        document.body.appendChild(panel);
+    }
+
+    /**
+     * Creates a styled control button.
+     * @param {string} text 
+     * @param {Function} onClick 
+     * @returns {HTMLButtonElement}
+     */
+    function createControlButton(text, onClick) {
+        const button = document.createElement('button');
+        button.innerText = text;
+        button.className = CONFIG.CONTROL_BUTTON_CLASS;
+        button.style.margin = '0 2px';
+        button.style.padding = '3px 5px';
+        button.style.fontSize = '12px';
+        button.style.cursor = 'pointer';
+        button.style.backgroundColor = '#444';
+        button.style.color = '#FFF';
+        button.style.border = 'none';
+        button.style.borderRadius = '3px';
+        button.style.transition = 'background-color 0.3s';
+        button.onmouseover = () => button.style.backgroundColor = '#555';
+        button.onmouseout = () => button.style.backgroundColor = '#444';
+        button.onclick = onClick;
+        return button;
+    }
+
+    /**
+     * Toggles Add Mode, allowing the user to add bounding boxes by clicking elements.
+     */
+    function toggleAddMode() {
+        if (addMode) {
+            deactivateAddMode();
+        } else {
+            deactivateRemoveMode();
+            deactivateIsolateMode();
+            activateAddMode();
+        }
+    }
+
+    /**
+     * Activates Add Mode.
+     */
+    function activateAddMode() {
+        addMode = true;
+        document.body.style.cursor = 'crosshair';
+        const handler = function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const el = e.target;
+            if (isInteractive(el) && !el.closest('#' + CONFIG.CONTROL_PANEL_ID) && !elementMap.has(el)) {
+                const label = labelCounter++;
+                elementMap.set(el, label);
+                const color = generateColor(label - 1);
+                colorMap.set(label, color);
+                createOverlayBox(el, label, color);
+
+                // Automatically add qualifying elements in the same container
+                const container = el.parentElement;
+                if (container) {
+                    const siblings = Array.from(container.children).filter(child => isInteractive(child) && !elementMap.has(child) && !child.closest('#' + CONFIG.CONTROL_PANEL_ID));
+                    siblings.forEach(sibling => {
+                        const siblingLabel = labelCounter++;
+                        elementMap.set(sibling, siblingLabel);
+                        const siblingColor = generateColor(siblingLabel - 1);
+                        colorMap.set(siblingLabel, siblingColor);
+                        createOverlayBox(sibling, siblingLabel, siblingColor);
+                    });
+                }
+
+                // Save to user settings
+                saveUserAction(el, 'add');
+            }
+            deactivateAddMode();
+        };
+        document.addEventListener('click', handler, true);
+        // Store handler for removal
+        activateAddMode.handler = handler;
+    }
+
+    /**
+     * Deactivates Add Mode.
+     */
+    function deactivateAddMode() {
+        addMode = false;
+        document.body.style.cursor = 'default';
+        if (activateAddMode.handler) {
+            document.removeEventListener('click', activateAddMode.handler, true);
+            activateAddMode.handler = null;
+        }
+    }
+
+    /**
+     * Toggles Remove Mode, allowing the user to remove bounding boxes by clicking elements.
+     */
+    function toggleRemoveMode() {
+        if (removeMode) {
+            deactivateRemoveMode();
+        } else {
+            deactivateAddMode();
+            deactivateIsolateMode();
+            activateRemoveMode();
+        }
+    }
+
+    /**
+     * Activates Remove Mode.
+     */
+    function activateRemoveMode() {
+        removeMode = true;
+        document.body.style.cursor = 'not-allowed';
+        const handler = function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const el = e.target;
+            if (elementMap.has(el) && !el.closest('#' + CONFIG.CONTROL_PANEL_ID)) {
+                const label = elementMap.get(el);
+                removeOverlayBox(label);
+                elementMap.delete(el);
+                colorMap.delete(label);
+
+                // Save to user settings
+                saveUserAction(el, 'remove');
+            }
+            deactivateRemoveMode();
+        };
+        document.addEventListener('click', handler, true);
+        // Store handler for removal
+        activateRemoveMode.handler = handler;
+    }
+
+    /**
+     * Deactivates Remove Mode.
+     */
+    function deactivateRemoveMode() {
+        removeMode = false;
+        document.body.style.cursor = 'default';
+        if (activateRemoveMode.handler) {
+            document.removeEventListener('click', activateRemoveMode.handler, true);
+            activateRemoveMode.handler = null;
+        }
+    }
+
+    /**
+     * Toggles Isolate Mode, showing only the hovered bounding box and hiding others.
+     */
+    function toggleIsolateMode() {
+        if (isolateMode) {
+            deactivateIsolateMode();
+        } else {
+            deactivateAddMode();
+            deactivateRemoveMode();
+            activateIsolateMode();
+        }
+    }
+
+    /**
+     * Activates Isolate Mode.
+     */
+    function activateIsolateMode() {
+        isolateMode = true;
+        isIsolated = false;
+        isolatedElement = null;
+
+        const hoverHandler = function (e) {
+            const el = e.currentTarget;
+            if (elementMap.has(el)) {
+                isIsolated = true;
+                isolatedElement = el;
+                updateOverlays();
+            }
+        };
+
+        const leaveHandler = function (e) {
+            if (isIsolated) {
+                isIsolated = false;
+                isolatedElement = null;
+                updateOverlays();
+            }
+        };
+
+        // Attach hover listeners to all interactive elements
+        interactiveElements.forEach(el => {
+            el.addEventListener('mouseenter', hoverHandler);
+            el.addEventListener('mouseleave', leaveHandler);
+        });
+
+        // Store handlers for removal
+        activateIsolateMode.hoverHandler = hoverHandler;
+        activateIsolateMode.leaveHandler = leaveHandler;
+    }
+
+    /**
+     * Deactivates Isolate Mode.
+     */
+    function deactivateIsolateMode() {
+        isolateMode = false;
+        isIsolated = false;
+        isolatedElement = null;
+
+        // Remove hover listeners from all interactive elements
+        interactiveElements.forEach(el => {
+            if (activateIsolateMode.hoverHandler && activateIsolateMode.leaveHandler) {
+                el.removeEventListener('mouseenter', activateIsolateMode.hoverHandler);
+                el.removeEventListener('mouseleave', activateIsolateMode.leaveHandler);
+            }
+        });
+
+        updateOverlays();
+    }
+
+    /**
+     * Checks if an element is excluded based on user settings.
+     * @param {HTMLElement} el 
+     * @returns {boolean}
+     */
+    function isElementExcluded(el) {
+        const exclusions = userSettings[window.location.hostname]?.excluded || [];
+        return exclusions.some(selector => el.matches(selector));
+    }
+
+    /**
+     * Saves user actions (add/remove) to localStorage for persistence.
+     * @param {HTMLElement} el 
+     * @param {string} action 'add' or 'remove'
+     */
+    function saveUserAction(el, action) {
+        const hostname = window.location.hostname;
+        if (!userSettings[hostname]) {
+            userSettings[hostname] = { included: [], excluded: [] };
+        }
+
+        if (action === 'remove') {
+            // Save the selector to exclude this element type
+            const selector = getUniqueSelector(el);
+            if (selector && !userSettings[hostname].excluded.includes(selector)) {
+                userSettings[hostname].excluded.push(selector);
+                localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(userSettings));
+            }
+        } else if (action === 'add') {
+            // Save the selector to include this element type
+            const selector = getUniqueSelector(el);
+            if (selector && !userSettings[hostname].included.includes(selector)) {
+                userSettings[hostname].included.push(selector);
+                localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(userSettings));
+            }
+        }
+    }
+
+    /**
+     * Generates a unique CSS selector for an element.
+     * @param {HTMLElement} el 
+     * @returns {string} CSS selector
+     */
+    function getUniqueSelector(el) {
+        if (el.id) {
+            return #${el.id};
+        }
+        let path = [];
+        while (el && el.nodeType === Node.ELEMENT_NODE && el.tagName.toLowerCase() !== 'html') {
+            let selector = el.tagName.toLowerCase();
+            if (el.className) {
+                const classes = el.className.trim().split(/\s+/).join('.');
+                selector += .${classes};
+            }
+            const sibling = el;
+            let siblingIndex = 1;
+            let siblingNode = el.previousElementSibling;
+            while (siblingNode) {
+                if (siblingNode.tagName === el.tagName) {
+                    siblingIndex++;
+                }
+                siblingNode = siblingNode.previousElementSibling;
+            }
+            selector += :nth-of-type(${siblingIndex});
+            path.unshift(selector);
+            el = el.parentElement;
+        }
+        return path.join(' > ');
+    }
+
+    /**
+     * Loads user settings from localStorage.
+     * @returns {Object}
+     */
+    function loadUserSettings() {
+        const stored = localStorage.getItem(CONFIG.STORAGE_KEY);
+        return stored ? JSON.parse(stored) : {};
+    }
+
+    /**
+     * Initializes the script.
+     */
+    function init() {
+        createControlPanel();
+        updateOverlays();
+
+        // Observe DOM changes
+        const observer = new MutationObserver(debounce(updateOverlays, CONFIG.DEBOUNCE_DELAY));
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+
+        // Observe scroll and resize events
+        window.addEventListener('scroll', debounce(updateOverlays, CONFIG.DEBOUNCE_DELAY), true);
+        window.addEventListener('resize', debounce(updateOverlays, CONFIG.DEBOUNCE_DELAY));
+
+        // Listen for window focus to recalculate overlays
+        window.addEventListener('focus', debounce(updateOverlays, CONFIG.DEBOUNCE_DELAY));
+    }
+
+    /**
+     * Executes the initialization after DOM is fully loaded.
+     */
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    /**
+     * Adjusts all labels after overlays are updated.
+     */
+    function adjustAllLabels() {
+        Object.values(labels).forEach(labelDiv => {
+            const box = document.getElementById(labelDiv.id.replace(CONFIG.LABEL_PREFIX, CONFIG.BOX_PREFIX));
+            if (box) {
+                adjustLabelPosition(labelDiv, box);
+            }
+        });
+    }
+
+    /**
+     * Updates isolation listeners when overlays are updated.
+     */
+    function setupIsolationListeners() {
+        if (isolateMode) {
+            deactivateIsolateMode();
+            activateIsolateMode();
+        }
+    }
+
+    // Re-adjust labels after overlays are updated
+    const originalUpdateOverlays = updateOverlays;
+    updateOverlays = function () {
+        originalUpdateOverlays();
+        adjustAllLabels();
+        setupIsolationListeners();
+    };
+
+})();
